@@ -1,0 +1,33 @@
+syntax = "proto3";
+
+package podmap;
+
+option go_package = "exascale-metric-collector/pkg/client/podmap";
+
+service PodMapper {
+    rpc PodPath(Request) returns (Response);
+    rpc PodPID(Request) returns (PIDResponse);
+    rpc PodContainer(Request) returns (ContainerResponse);
+}
+
+message Request {
+}
+message Response {
+    map<string, Value> message = 1;
+}
+
+message PIDResponse {
+    map<string, string> message = 1;
+}
+
+message ContainerResponse {
+    map<string, ContainerValue> message = 1;
+}
+
+message Value {
+    repeated string value = 1;
+}
+
+message ContainerValue {
+    repeated string value = 1;
+}
