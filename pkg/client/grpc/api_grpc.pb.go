@@ -22,8 +22,8 @@ const _ = grpc.SupportPackageIsVersion7
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type MetricGathererClient interface {
-	Node(ctx context.Context, in *Request, opts ...grpc.CallOption) (*Response, error)
-	GPU(ctx context.Context, in *Request, opts ...grpc.CallOption) (*Response, error)
+	GetNode(ctx context.Context, in *Request, opts ...grpc.CallOption) (*Response, error)
+	GetGPU(ctx context.Context, in *Request, opts ...grpc.CallOption) (*Response, error)
 }
 
 type metricGathererClient struct {
@@ -34,18 +34,18 @@ func NewMetricGathererClient(cc grpc.ClientConnInterface) MetricGathererClient {
 	return &metricGathererClient{cc}
 }
 
-func (c *metricGathererClient) Node(ctx context.Context, in *Request, opts ...grpc.CallOption) (*Response, error) {
+func (c *metricGathererClient) GetNode(ctx context.Context, in *Request, opts ...grpc.CallOption) (*Response, error) {
 	out := new(Response)
-	err := c.cc.Invoke(ctx, "/grpc.MetricGatherer/Node", in, out, opts...)
+	err := c.cc.Invoke(ctx, "/grpc.MetricGatherer/GetNode", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *metricGathererClient) GPU(ctx context.Context, in *Request, opts ...grpc.CallOption) (*Response, error) {
+func (c *metricGathererClient) GetGPU(ctx context.Context, in *Request, opts ...grpc.CallOption) (*Response, error) {
 	out := new(Response)
-	err := c.cc.Invoke(ctx, "/grpc.MetricGatherer/GPU", in, out, opts...)
+	err := c.cc.Invoke(ctx, "/grpc.MetricGatherer/GetGPU", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -56,8 +56,8 @@ func (c *metricGathererClient) GPU(ctx context.Context, in *Request, opts ...grp
 // All implementations must embed UnimplementedMetricGathererServer
 // for forward compatibility
 type MetricGathererServer interface {
-	Node(context.Context, *Request) (*Response, error)
-	GPU(context.Context, *Request) (*Response, error)
+	GetNode(context.Context, *Request) (*Response, error)
+	GetGPU(context.Context, *Request) (*Response, error)
 	mustEmbedUnimplementedMetricGathererServer()
 }
 
@@ -65,10 +65,10 @@ type MetricGathererServer interface {
 type UnimplementedMetricGathererServer struct {
 }
 
-func (UnimplementedMetricGathererServer) Node(context.Context, *Request) (*Response, error) {
+func (UnimplementedMetricGathererServer) GetNode(context.Context, *Request) (*Response, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Node not implemented")
 }
-func (UnimplementedMetricGathererServer) GPU(context.Context, *Request) (*Response, error) {
+func (UnimplementedMetricGathererServer) GetGPU(context.Context, *Request) (*Response, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GPU not implemented")
 }
 func (UnimplementedMetricGathererServer) mustEmbedUnimplementedMetricGathererServer() {}
@@ -84,38 +84,38 @@ func RegisterMetricGathererServer(s grpc.ServiceRegistrar, srv MetricGathererSer
 	s.RegisterService(&MetricGatherer_ServiceDesc, srv)
 }
 
-func _MetricGatherer_Node_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _MetricGatherer_GetNode_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(Request)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(MetricGathererServer).Node(ctx, in)
+		return srv.(MetricGathererServer).GetNode(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/grpc.MetricGatherer/Node",
+		FullMethod: "/grpc.MetricGatherer/GetNode",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(MetricGathererServer).Node(ctx, req.(*Request))
+		return srv.(MetricGathererServer).GetNode(ctx, req.(*Request))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _MetricGatherer_GPU_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _MetricGatherer_GetGPU_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(Request)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(MetricGathererServer).GPU(ctx, in)
+		return srv.(MetricGathererServer).GetGPU(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/grpc.MetricGatherer/GPU",
+		FullMethod: "/grpc.MetricGatherer/GetGPU",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(MetricGathererServer).GPU(ctx, req.(*Request))
+		return srv.(MetricGathererServer).GetGPU(ctx, req.(*Request))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -128,12 +128,12 @@ var MetricGatherer_ServiceDesc = grpc.ServiceDesc{
 	HandlerType: (*MetricGathererServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
-			MethodName: "Node",
-			Handler:    _MetricGatherer_Node_Handler,
+			MethodName: "GetNode",
+			Handler:    _MetricGatherer_GetNode_Handler,
 		},
 		{
-			MethodName: "GPU",
-			Handler:    _MetricGatherer_GPU_Handler,
+			MethodName: "GetGPU",
+			Handler:    _MetricGatherer_GetGPU_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

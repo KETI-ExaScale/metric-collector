@@ -1,17 +1,17 @@
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: pod-mapper
+  name: metric-collector
   namespace: keti-system
 ---
 kind: ClusterRoleBinding
 apiVersion: rbac.authorization.k8s.io/v1
 metadata:
-  name: pod-mapper
+  name: metric-collector
   namespace: keti-system
 subjects:
 - kind: ServiceAccount
-  name: pod-mapper
+  name: metric-collector
   namespace: keti-system
 roleRef:
   kind: ClusterRole
@@ -21,56 +21,172 @@ roleRef:
 apiVersion: v1
 kind: Service
 metadata:
-  name: pod-mapper
+  name: metric-collector
   namespace: keti-system
   labels:
-    name: pod-mapper
+    name: metric-collector
 spec:
   type: NodePort
   ports:
-  - port: 50051
-    targetPort: 50051
+  - port: 50052
+    name: grpc
+    targetPort: 50052
     nodePort: 32551
     protocol: TCP
-  - port: 9394
-    targetPort: 9394
-    nodePort: 32994
+  - port: 9395
+    name: rest
+    targetPort: 9395
+    nodePort: 32395
     protocol: TCP
-  selector:
-    name: pod-mapper
 ---
-apiVersion: apps/v1
-kind: DaemonSet
+apiVersion: v1
+kind: Pod
 metadata:
-  name: keti-pod-mapper
+  name: keti-metric-collector-gpu-node1
   namespace: keti-system
+  labels:
+    name: keti-metric-collector
 spec:
-  selector:
-    matchLabels:
-      name: keti-pod-mapper
-  template:
-    metadata:
-      labels:
-        name: keti-pod-mapper
-    spec:
-      serviceAccountName: pod-mapper
-      imagePullSecrets:
-      - name: harbor-user
-      restartPolicy: Always
-      containers:
-      - name: pod-mapper
-        image: ketidevit.repo/exascale/pod-mapper:latest
-        volumeMounts:
-        - name: containers
-          mountPath: /var/lib/docker/containers
-        env:
-        - name: NODENAME
-          valueFrom:
-            fieldRef:
-              fieldPath: spec.nodeName
-      volumes:
-      - name: containers
-        hostPath:
-          path: /var/lib/docker/containers
+  nodeName: gpu-node1
+  serviceAccountName: metric-collector
+  imagePullSecrets:
+  - name: keti-user
+  restartPolicy: Always
+  containers:
+  - name: metric-collector
+    image: ketidevit2/exascale.metric-collector:latest
+    ports:
+    - containerPort: 50052
+    - containerPort: 9395
+    volumeMounts:
+    - name: containers
+      mountPath: /var/lib/docker/containers
+    env:
+    - name: NODE_NAME
+      valueFrom:
+        fieldRef:
+          fieldPath: spec.nodeName
+    - name: POD_NAME
+      valueFrom:
+        fieldRef:
+          fieldPath: metadata.name
+    resources:
+      limits:
+        nvidia.com/gpu: 1
+  volumes:
+  - name: containers
+    hostPath:
+      path: /var/lib/docker/containers
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: keti-metric-collector-gpu-node2
+  namespace: keti-system
+  labels:
+    name: keti-metric-collector
+spec:
+  nodeName: gpu-node2
+  serviceAccountName: metric-collector
+  imagePullSecrets:
+  - name: harbor-user
+  restartPolicy: Always
+  containers:
+  - name: metric-collector
+    image: ketidevit2/exascale.metric-collector:latest
+    ports:
+    - containerPort: 50052
+    - containerPort: 9395
+    volumeMounts:
+    - name: containers
+      mountPath: /var/lib/docker/containers
+    env:
+    - name: NODE_NAME
+      valueFrom:
+        fieldRef:
+          fieldPath: spec.nodeName
+    - name: POD_NAME
+      valueFrom:
+        fieldRef:
+          fieldPath: metadata.name
+    resources:
+      limits:
+        nvidia.com/gpu: 1
+  volumes:
+  - name: containers
+    hostPath:
+      path: /var/lib/docker/containers
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: keti-metric-collector-cpu-node1
+  namespace: keti-system
+  labels:
+    name: keti-metric-collector
+spec:
+  nodeName: cpu-node1
+  serviceAccountName: metric-collector
+  imagePullSecrets:
+  - name: harbor-user
+  restartPolicy: Always
+  containers:
+  - name: metric-collector
+    image: ketidevit2/exascale.metric-collector:latest
+    ports:
+    - containerPort: 50052
+    - containerPort: 9395
+    volumeMounts:
+    - name: containers
+      mountPath: /var/lib/docker/containers
+    env:
+    - name: NODE_NAME
+      valueFrom:
+        fieldRef:
+          fieldPath: spec.nodeName
+    - name: POD_NAME
+      valueFrom:
+        fieldRef:
+          fieldPath: metadata.name
+  volumes:
+  - name: containers
+    hostPath:
+      path: /var/lib/docker/containers
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: keti-metric-collector-c1-master
+  namespace: keti-system
+  labels:
+    name: keti-metric-collector
+spec:
+  nodeName: c1-master
+  serviceAccountName: metric-collector
+  imagePullSecrets:
+  - name: harbor-user
+  restartPolicy: Always
+  containers:
+  - name: metric-collector
+    image: ketidevit2/exascale.metric-collector:latest
+    ports:
+    - containerPort: 50052
+    - containerPort: 9395
+    volumeMounts:
+    - name: containers
+      mountPath: /var/lib/docker/containers
+    env:
+    - name: NODE_NAME
+      valueFrom:
+        fieldRef:
+          fieldPath: spec.nodeName
+    - name: POD_NAME
+      valueFrom:
+        fieldRef:
+          fieldPath: metadata.name
+  volumes:
+  - name: containers
+    hostPath:
+      path: /var/lib/docker/containers
 
 

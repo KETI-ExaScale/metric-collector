@@ -1,0 +1,24 @@
+syntax = "proto3";
+
+package metric;
+
+option go_package = "analysis-engine/pkg/api/metric";
+
+service MetricCollector {
+  rpc GetMultiMetric(Request) returns (MultiMetric); 
+}
+
+message Request {}
+
+message MultiMetric {
+  map<string, NodeMetric> node_metrics = 1;
+}
+
+message NodeMetric {
+  map<string, GPUMetric> gpu_metrics = 1;
+  float node_memory = 2;
+}
+
+message GPUMetric {
+    float gpu_power = 1;
+}

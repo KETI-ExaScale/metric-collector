@@ -3,19 +3,14 @@ package worker
 import (
 	"context"
 	"exascale-metric-collector/pkg/client/kubelet"
-	"exascale-metric-collector/pkg/client/podmap"
 	"exascale-metric-collector/pkg/decode"
 	"exascale-metric-collector/pkg/storage"
 	"fmt"
-	"log"
 	"net"
-	"net/http"
 	"os"
 
 	"github.com/NVIDIA/go-nvml/pkg/nvml"
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"google.golang.org/grpc"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
@@ -26,17 +21,19 @@ import (
 )
 
 type MetricWorker struct {
-	KETIRegistry  *prometheus.Registry
-	KubeletClient *kubelet.KubeletClient
+	KETIGPURegistry  *prometheus.Registry
+	KETINodeRegistry *prometheus.Registry
+	KubeletClient    *kubelet.KubeletClient
 }
 
-func Initmetrics(metricType bool, nodeName string) *MetricWorker {
+func Initmetrics(metricType bool, nodeName string, podName string) *MetricWorker {
 	// Since we are dealing with custom Collector implementations, it might
 	// be a good idea to try it out with a pedantic registry.
 	fmt.Println("Initializing metrics...")
 
 	worker := &MetricWorker{
-		KETIRegistry: prometheus.NewRegistry(),
+		KETIGPURegistry:  prometheus.NewRegistry(),
+		KETINodeRegistry: prometheus.NewRegistry(),
 	}
 
 	//reg := prometheus.NewPedanticRegistry()
@@ -66,15 +63,8 @@ func Initmetrics(metricType bool, nodeName string) *MetricWorker {
 			break
 		}
 	}
-	NewClusterManager(metricType, worker.KETIRegistry, clientset, worker.KubeletClient)
+	NewClusterManager(metricType, worker.KETINodeRegistry, worker.KETIGPURegistry, clientset, worker.KubeletClient, podName)
 	return worker
-}
-
-func (worker *MetricWorker) StartHTTPServer() {
-	http.Handle("/metric", promhttp.HandlerFor(worker.KETIRegistry, promhttp.HandlerOpts{
-		EnableOpenMetrics: true,
-	}))
-	log.Fatal(http.ListenAndServe(":9394", nil))
 }
 
 type ClusterManager struct {
@@ -86,17 +76,18 @@ type GPUCollector struct {
 	HostGPUCoreGauge   *prometheus.Desc
 	HostGPUMemoryGauge *prometheus.Desc
 	HostGPUPowerGauge  *prometheus.Desc
-	GPUMemoryGauge     *prometheus.Desc
-	GPUMemoryCounter   *prometheus.Desc
-	GPUTemperature     *prometheus.Desc
-	GPUFlops           *prometheus.Desc
-	GPUArchitecture    *prometheus.Desc
-	GPUPodNum          *prometheus.Desc
-	GPUFanspeed        *prometheus.Desc
-	GPUBandwidth       *prometheus.Desc
-	GPUDriverVersion   *prometheus.Desc
-	ClientSet          *kubernetes.Clientset
-	KubeletClient      *kubelet.KubeletClient
+	//@ria
+	GPUMemoryGauge   *prometheus.Desc
+	GPUMemoryCounter *prometheus.Desc
+	GPUTemperature   *prometheus.Desc
+	GPUFlops         *prometheus.Desc
+	GPUArchitecture  *prometheus.Desc
+	GPUPodNum        *prometheus.Desc
+	GPUFanspeed      *prometheus.Desc
+	GPUBandwidth     *prometheus.Desc
+	GPUDriverVersion *prometheus.Desc
+	ClientSet        *kubernetes.Clientset
+	KubeletClient    *kubelet.KubeletClient
 }
 type NodeCollector struct {
 	ClusterManager   *ClusterManager
@@ -112,20 +103,19 @@ type NodeCollector struct {
 	KubeletClient    *kubelet.KubeletClient
 }
 
-func NewClusterManager(metricType bool, reg prometheus.Registerer, clientset *kubernetes.Clientset, kubeletClient *kubelet.KubeletClient) {
-	mapperPodL, err := clientset.CoreV1().Pods("keti-system").List(context.Background(), metav1.ListOptions{LabelSelector: "name=keti-pod-mapper"})
+func NewClusterManager(metricType bool, Nodereg prometheus.Registerer, GPUreg prometheus.Registerer,
+	clientset *kubernetes.Clientset, kubeletClient *kubelet.KubeletClient, podName string) {
+	mapperPod, err := clientset.CoreV1().Pods("keti-system").Get(context.Background(), podName, metav1.GetOptions{})
 	if err != nil {
 		klog.Errorln(err)
 	}
-
-	mapperPod := mapperPodL.Items[0]
 
 	if metricType {
 		gcm := &ClusterManager{
 			MetricType: "GPUMetric",
 		}
 		gc := GPUCollector{
-			MapperHost:     net.JoinHostPort(mapperPod.Status.PodIP, "50051"),
+			MapperHost:     net.JoinHostPort(mapperPod.Status.PodIP, "50052"),
 			KubeletClient:  kubeletClient,
 			ClusterManager: gcm,
 			HostGPUCoreGauge: prometheus.NewDesc(
@@ -143,15 +133,16 @@ func NewClusterManager(metricType bool, reg prometheus.Registerer, clientset *ku
 				"Host GPU Power Utilization with Percent",
 				[]string{"devicename", "deviceuuid"}, nil,
 			),
+			//@ria
 			GPUMemoryGauge: prometheus.NewDesc(
 				"GPU_Memory_Gauge",
 				"Pod GPU Memory Utilization with Percent",
-				[]string{"podnamespace", "podname", "containerid", "deviceuuid"}, nil,
+				[]string{"devicename", "deviceuuid"}, nil,
 			),
 			GPUMemoryCounter: prometheus.NewDesc(
 				"GPU_Memory_Counter",
 				"Pod GPU Memory Utilization with Counter",
-				[]string{"podnamespace", "podname", "containerid", "deviceuuid"}, nil,
+				[]string{"devicename", "deviceuuid"}, nil,
 			),
 			GPUTemperature: prometheus.NewDesc(
 				"GPU_Temperature",
@@ -189,7 +180,7 @@ func NewClusterManager(metricType bool, reg prometheus.Registerer, clientset *ku
 			),
 			ClientSet: clientset,
 		}
-		prometheus.WrapRegistererWith(prometheus.Labels{"metricType": gcm.MetricType}, reg).MustRegister(gc)
+		prometheus.WrapRegistererWith(prometheus.Labels{"metricType": gcm.MetricType}, GPUreg).MustRegister(gc)
 	}
 	ncm := &ClusterManager{
 		MetricType: "NodeMetric",
@@ -199,7 +190,7 @@ func NewClusterManager(metricType bool, reg prometheus.Registerer, clientset *ku
 		KubeletClient:  kubeletClient,
 		CPUCoreGauge: prometheus.NewDesc(
 			"CPU_Core_Gauge",
-			"Pod CPU Utilization with Percent",
+			"Host CPU Utilization with Percent",
 			[]string{"clustername", "podnamespace", "podname"}, nil,
 		),
 		CPUCoreCounter: prometheus.NewDesc(
@@ -209,7 +200,7 @@ func NewClusterManager(metricType bool, reg prometheus.Registerer, clientset *ku
 		),
 		MemoryGauge: prometheus.NewDesc(
 			"Memory_Gauge",
-			"Pod Memory Utilization with Percent",
+			"Host Memory Utilization with Percent",
 			[]string{"clustername", "podnamespace", "podname"}, nil,
 		),
 		MemoryCounter: prometheus.NewDesc(
@@ -219,7 +210,7 @@ func NewClusterManager(metricType bool, reg prometheus.Registerer, clientset *ku
 		),
 		StorageGauge: prometheus.NewDesc(
 			"Storage_Gauge",
-			"Pod Storage Utilization with Percent",
+			"Host Storage Utilization with Percent",
 			[]string{"clustername", "podnamespace", "podname"}, nil,
 		),
 		StorageCounter: prometheus.NewDesc(
@@ -239,7 +230,7 @@ func NewClusterManager(metricType bool, reg prometheus.Registerer, clientset *ku
 		),
 		ClientSet: clientset,
 	}
-	prometheus.WrapRegistererWith(prometheus.Labels{"metricType": ncm.MetricType}, reg).MustRegister(nc)
+	prometheus.WrapRegistererWith(prometheus.Labels{"metricType": ncm.MetricType}, Nodereg).MustRegister(nc)
 }
 
 func (nc NodeCollector) Describe(ch chan<- *prometheus.Desc) {
@@ -343,36 +334,38 @@ func (gc GPUCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- gc.GPUBandwidth       //
 	ch <- gc.GPUDriverVersion   //
 	ch <- gc.GPUFlops           //
+	//@ria
 	ch <- gc.GPUMemoryCounter
 	ch <- gc.GPUMemoryGauge
+	ch <- gc.GPUPodNum
 	ch <- gc.GPUTemperature //
 	ch <- gc.GPUFanspeed    //
 }
 func (gc GPUCollector) Collect(ch chan<- prometheus.Metric) {
-	conn, err := grpc.Dial(gc.MapperHost, grpc.WithInsecure())
-	if err != nil {
-		log.Fatalf("Failed to dial: %v", err)
-	}
-	defer conn.Close()
-	nodeName := os.Getenv("NODE_NAME")
-	client := podmap.NewPodMapperClient(conn)
-	req := &podmap.Request{}
-	res, err := client.PodPID(context.Background(), req)
-	if err != nil {
-		klog.Fatalf("Failed to call YourMethod: %v", err)
-	}
-	containerRes, err := client.PodContainer(context.Background(), req)
-	if err != nil {
-		klog.Fatalf("Failed to call YourMethod: %v", err)
-	}
-	PIDMap := res.Message
-	ContainerMap := containerRes.Message
-	klog.Infoln(ContainerMap)
+	// conn, err := grpc.Dial(gc.MapperHost, grpc.WithInsecure())
+	// if err != nil {
+	// 	log.Fatalf("Failed to dial: %v", err)
+	// }
+	// defer conn.Close()
+	// nodeName := os.Getenv("NODE_NAME")
+	// client := podmap.NewPodMapperClient(conn)
+	// req := &podmap.Request{}
+	// res, err := client.PodPID(context.Background(), req)
+	// if err != nil {
+	// 	klog.Fatalf("Failed to call YourMethod: %v", err)
+	// }
+	// containerRes, err := client.PodContainer(context.Background(), req)
+	// if err != nil {
+	// 	klog.Fatalf("Failed to call YourMethod: %v", err)
+	// }
+	// PIDMap := res.Message
+	// ContainerMap := containerRes.Message
+	// klog.Infoln(ContainerMap)
 	procInfo := make(map[string]uint64)
-	podList, err := gc.ClientSet.CoreV1().Pods(v1.NamespaceAll).List(context.Background(), metav1.ListOptions{})
-	if err != nil {
-		klog.Errorln(err)
-	}
+	// podList, err := gc.ClientSet.CoreV1().Pods(v1.NamespaceAll).List(context.Background(), metav1.ListOptions{})
+	// if err != nil {
+	// 	klog.Errorln(err)
+	// }
 
 	nvmlReturn := nvml.Init()
 	if nvmlReturn != nvml.SUCCESS {
@@ -387,7 +380,7 @@ func (gc GPUCollector) Collect(ch chan<- prometheus.Metric) {
 	}()
 	driverVersion, nvmlReturn := nvml.SystemGetDriverVersion()
 	if nvmlReturn != nvml.SUCCESS {
-		fmt.Printf("Failed to get driver version: %v\n", err)
+		fmt.Printf("Failed to get driver version\n")
 		return
 	}
 	count, nvmlReturn := nvml.DeviceGetCount()
@@ -402,108 +395,185 @@ func (gc GPUCollector) Collect(ch chan<- prometheus.Metric) {
 		if ret != nvml.SUCCESS {
 			klog.Fatalf("Unable to get device at index %d: %v", i, ret)
 		}
-		memoryInfo, _ := device.GetMemoryInfo()
+		memoryInfo, ret := device.GetMemoryInfo()
+		if ret != nvml.SUCCESS {
+			klog.Fatalf("Unable to get memoryInfo: %v", ret)
+		} else {
+			klog.Infof("Memory Get Complete: %v\n", memoryInfo.Total)
+		}
+
 		maxMemory := memoryInfo.Total
 
-		deviceName, _ := device.GetName()
-		hostGPUUsage, _ := device.GetUtilizationRates()
-		hostGPUPower, _ := device.GetPowerUsage()
-		deviceTemperature, _ := device.GetTemperature(0)
-		devuceUUID, _ := device.GetUUID()
+		deviceName, ret := device.GetName()
+		if ret != nvml.SUCCESS {
+			klog.Fatalf("Unable to get deviceName: %v", ret)
+		} else {
+			klog.Infof("DeviceName Get Complete: %v\n", deviceName)
+		}
+		hostGPUUsage, ret := device.GetUtilizationRates()
+		if ret != nvml.SUCCESS {
+			klog.Fatalf("Unable to get hostGPUUsage: %v", ret)
+		} else {
+			klog.Infof("HostGPUUsage Get Complete: %v\n", hostGPUUsage.Memory)
+		}
+		hostGPUPower, ret := device.GetPowerUsage()
+		if ret != nvml.SUCCESS {
+			klog.Fatalf("Unable to get hostGPUPower: %v", ret)
+		} else {
+			klog.Infof("HostGPUPower Get Complete: %v\n", hostGPUPower)
+		}
+		deviceTemperature, ret := device.GetTemperature(0)
+		if ret != nvml.SUCCESS {
+			klog.Fatalf("Unable to get deviceTemperature: %v", ret)
+		} else {
+			klog.Infof("deviceTemperature Get Complete: %v\n", deviceTemperature)
+		}
+		deviceUUID, ret := device.GetUUID()
+		if ret != nvml.SUCCESS {
+			klog.Fatalf("Unable to get deviceUUID: %v", ret)
+		} else {
+			klog.Infof("deviceUUID Get Complete: %v\n", deviceTemperature)
+		}
 
-		computeCapabilityMajor, computeCapabilityMinor, _ := device.GetCudaComputeCapability()
-		architecture, _ := nvml.DeviceGetArchitecture(device)
-		clock, _ := device.GetMaxClockInfo(nvml.CLOCK_SM)
-		multiprocessorCount, _ := device.GetNumGpuCores()
+		computeCapabilityMajor, computeCapabilityMinor, ret := device.GetCudaComputeCapability()
+		if ret != nvml.SUCCESS {
+			klog.Fatalf("Unable to get computeCapabilityMajor: %v", ret)
+		}
+		architecture, ret := nvml.DeviceGetArchitecture(device)
+		if ret != nvml.SUCCESS {
+			klog.Fatalf("Unable to get architecture: %v", ret)
+		}
+		clock, ret := device.GetMaxClockInfo(nvml.CLOCK_SM)
+		if ret != nvml.SUCCESS {
+			klog.Fatalf("Unable to get clock: %v", ret)
+		}
+		multiprocessorCount, ret := device.GetNumGpuCores()
+		if ret != nvml.SUCCESS {
+			klog.Fatalf("Unable to get multiprocessorCount: %v", ret)
+		}
 		deviceFlops := 2 * float64(clock) * float64(multiprocessorCount) * float64(computeCapabilityMajor) * float64(computeCapabilityMinor)
 		deviceBandwidth := getMemoryBandwidth(device)
-		deviceFan, _ := device.GetFanSpeed()
+		deviceFan, ret := device.GetFanSpeed()
+		if ret != nvml.SUCCESS {
+			klog.Fatalf("Unable to get deviceFan: %v", ret)
+		}
 
 		ch <- prometheus.MustNewConstMetric(
 			gc.HostGPUCoreGauge,
 			prometheus.GaugeValue,
 			float64(hostGPUUsage.Gpu),
-			deviceName, devuceUUID,
+			deviceName, deviceUUID,
 		)
 		ch <- prometheus.MustNewConstMetric(
 			gc.HostGPUMemoryGauge,
 			prometheus.GaugeValue,
 			float64(hostGPUUsage.Memory),
-			deviceName, devuceUUID,
+			deviceName, deviceUUID,
 		)
 		ch <- prometheus.MustNewConstMetric(
 			gc.HostGPUPowerGauge,
 			prometheus.GaugeValue,
 			float64(hostGPUPower),
-			deviceName, devuceUUID,
+			deviceName, deviceUUID,
 		)
 		ch <- prometheus.MustNewConstMetric(
 			gc.GPUTemperature,
 			prometheus.GaugeValue,
 			float64(deviceTemperature),
-			deviceName, devuceUUID,
+			deviceName, deviceUUID,
 		)
 		ch <- prometheus.MustNewConstMetric(
 			gc.GPUFlops,
 			prometheus.GaugeValue,
 			float64(deviceFlops),
-			deviceName, devuceUUID,
+			deviceName, deviceUUID,
 		)
 		ch <- prometheus.MustNewConstMetric(
 			gc.GPUArchitecture,
 			prometheus.GaugeValue,
 			float64(architecture),
-			deviceName, devuceUUID,
+			deviceName, deviceUUID,
 		)
 		ch <- prometheus.MustNewConstMetric(
 			gc.GPUFanspeed,
 			prometheus.GaugeValue,
 			float64(deviceFan),
-			deviceName, devuceUUID,
+			deviceName, deviceUUID,
 		)
 		ch <- prometheus.MustNewConstMetric(
 			gc.GPUBandwidth,
 			prometheus.GaugeValue,
 			float64(deviceBandwidth),
-			deviceName, devuceUUID,
+			deviceName, deviceUUID,
 		)
 		ch <- prometheus.MustNewConstMetric(
 			gc.GPUDriverVersion,
 			prometheus.GaugeValue,
 			float64(0),
-			deviceName, devuceUUID, driverVersion,
+			deviceName, deviceUUID, driverVersion,
 		)
 		procInfo = GetGPUProcess(device)
-		for _, pod := range podList.Items {
-			if pod.Namespace == "kube-system" {
-				continue
-			}
-			if pod.Spec.NodeName != nodeName {
-				continue
-			}
-			if containers, ok := ContainerMap[string(pod.UID)]; ok {
-				klog.Infoln("GPU-Pod Found ::", pod.Name)
-				for _, container := range containers.Value {
-					pid := PIDMap[container]
-					if _, ok := procInfo[pid]; ok {
-						ch <- prometheus.MustNewConstMetric(
-							gc.GPUMemoryCounter,
-							prometheus.GaugeValue,
-							float64(procInfo[pid]),
-							pod.Namespace, pod.Name, container, devuceUUID,
-						)
-						ch <- prometheus.MustNewConstMetric(
-							gc.GPUMemoryGauge,
-							prometheus.GaugeValue,
-							float64(procInfo[pid])/float64(maxMemory)*100,
-							pod.Namespace, pod.Name, container, devuceUUID,
-						)
-					}
-				}
+
+		ch <- prometheus.MustNewConstMetric(
+			gc.GPUPodNum,
+			prometheus.GaugeValue,
+			float64(len(procInfo)),
+			deviceName, deviceUUID,
+		)
+		//@ria
+		if len(procInfo) == 0 {
+			ch <- prometheus.MustNewConstMetric(
+				gc.GPUMemoryCounter,
+				prometheus.GaugeValue,
+				float64(0),
+				deviceName, deviceUUID,
+			)
+			ch <- prometheus.MustNewConstMetric(
+				gc.GPUMemoryGauge,
+				prometheus.GaugeValue,
+				0,
+				deviceName, deviceUUID,
+			)
+		} else {
+			for _, value := range procInfo {
+				ch <- prometheus.MustNewConstMetric(
+					gc.GPUMemoryCounter,
+					prometheus.GaugeValue,
+					float64(value),
+					deviceName, deviceUUID,
+				)
+				ch <- prometheus.MustNewConstMetric(
+					gc.GPUMemoryGauge,
+					prometheus.GaugeValue,
+					(float64(value)/float64(maxMemory))*100,
+					deviceName, deviceUUID,
+				)
 			}
 		}
-	}
 
+		// for _, pod := range podList.Items {
+		// 	if pod.Namespace == "kube-system" {
+		// 		continue
+		// 	}
+		// 	if pod.Spec.NodeName != nodeName {
+		// 		continue
+		// 	}
+		// 	if _, ok := procInfo[pid]; ok {
+		// 		ch <- prometheus.MustNewConstMetric(
+		// 			gc.GPUMemoryCounter,
+		// 			prometheus.GaugeValue,
+		// 			float64(procInfo[pid]),
+		// 			pod.Namespace, pod.Name, deviceUUID,
+		// 		)
+		// 		ch <- prometheus.MustNewConstMetric(
+		// 			gc.GPUMemoryGauge,
+		// 			prometheus.GaugeValue,
+		// 			float64(procInfo[pid])/float64(maxMemory)*100,
+		// 			pod.Namespace, pod.Name, deviceUUID,
+		// 		)
+		// 	}
+		// }
+	}
 }
 
 func Scrap(kubelet_client *kubelet.KubeletClient, node *v1.Node) (*storage.Collection, error) {
@@ -538,8 +608,18 @@ func CollectNode(kubelet_client *kubelet.KubeletClient, node *v1.Node) (*storage
 }
 
 func GetGPUProcess(device nvml.Device) map[string]uint64 {
-	nvmlProc, _ := device.GetComputeRunningProcesses()
-	nvmlmpsProc, _ := device.GetMPSComputeRunningProcesses()
+	nvmlProc, ret := device.GetComputeRunningProcesses()
+	if ret != nvml.SUCCESS {
+		klog.Fatalf("Unable to get nvmlProc: %v", ret)
+	} else {
+		klog.Infof("nvmlProc Get Complete: %v\n", nvmlProc)
+	}
+	nvmlmpsProc, ret := device.GetMPSComputeRunningProcesses()
+	if ret != nvml.SUCCESS {
+		klog.Fatalf("Unable to get nvmlmpsProc: %v", ret)
+	} else {
+		klog.Infof("nvmlmpsProc Get Complete: %v\n", nvmlmpsProc)
+	}
 	nvmlProc = append(nvmlProc, nvmlmpsProc...)
 
 	procInfo := make(map[string]uint64)
@@ -550,10 +630,17 @@ func GetGPUProcess(device nvml.Device) map[string]uint64 {
 	}
 	return procInfo
 }
-func getMemoryBandwidth(device nvml.Device) float64 {
-	busWidth, _ := device.GetMemoryBusWidth()
 
-	memClock, _ := device.GetMaxClockInfo(nvml.CLOCK_MEM)
+func getMemoryBandwidth(device nvml.Device) float64 {
+	busWidth, ret := device.GetMemoryBusWidth()
+	if ret != nvml.SUCCESS {
+		klog.Fatalf("Unable to get busWidth: %v", ret)
+	}
+
+	memClock, ret := device.GetMaxClockInfo(nvml.CLOCK_MEM)
+	if ret != nvml.SUCCESS {
+		klog.Fatalf("Unable to get memClock: %v", ret)
+	}
 
 	bandwidth := float64(busWidth) * float64(memClock) * 2 / 8 / 1e6 // GB/s
 	return bandwidth
